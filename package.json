@@ -1,0 +1,28 @@
+{
+  "name": "mf-api-mcp",
+  "version": "0.1.0",
+  "description": "非公式MCPサーバー for マネーフォワード クラウド会計 — APIキー認証版。1本のキーで全事業者、証憑添付・仕訳削除に対応",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": { "mf-api-mcp": "dist/index.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "prepare": "npm run build"
+  },
+  "keywords": ["mcp", "model-context-protocol", "moneyforward", "accounting", "japan", "api-key", "bookkeeping"],
+  "author": "kentaroajisaka",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  }
+}
