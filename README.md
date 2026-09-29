@@ -76,7 +76,8 @@ MF仕訳タイプ : 外部連携（API）
 }
 ```
 
-`MF_OFFICE_CODE` は既定の事業者。省略すると全ツールで `office_code` が必須になる。
+`MF_OFFICE_CODE` は会計 API を呼ぶ `mfc_ca_*` ツールの既定の事業者。未設定なら呼び出しごとに `office_code` を渡す。
+引数の `office_code` は `MF_OFFICE_CODE` より優先される。認証・情報表示の3ツールは事業者番号を受け取らない。
 
 ## 仕組み
 
