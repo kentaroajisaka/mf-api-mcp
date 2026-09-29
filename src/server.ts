@@ -23,7 +23,7 @@ function errText(e: unknown) {
   };
 }
 
-/** 全ツール共通。APIキー認証では事業者番号が必須。 */
+/** 会計 API を呼ぶツール共通。APIキー認証では事業者番号が必須。 */
 const officeParam = {
   office_code: z
     .string()
@@ -56,7 +56,7 @@ export function createServer(): McpServer {
 - キーを編集しても**キーの値は変わらない**。顧問先が増えたらチェックを足すだけ
 
 ## 事業者の指定
-- **すべてのツールが office_code を受け取る（XXXX-XXXX 形式）**
+- **会計 API を呼ぶ mfc_ca_* ツールが office_code を受け取る（XXXX-XXXX 形式）**
 - list_offices で一覧を取得（MF から直接引くので自前の台帳は無い）
 - MF_OFFICE_CODE を設定すると既定になる
 
@@ -133,7 +133,7 @@ export function createServer(): McpServer {
         exchange: "https://api.biz.moneyforward.com/auth/exchange",
         jwt_ttl: "1時間（自動更新）",
         rate_limit: "交換エンドポイントのみ APIキーごと毎分100回。429 は Retry-After 付き",
-        office_code: "全ツールで必須（MF_OFFICE_CODE で既定化可）",
+        office_code: "mfc_ca_* ツールで必須（MF_OFFICE_CODE で既定化可）",
         env: {
           MF_API_KEY: process.env.MF_API_KEY ? "設定あり" : "未設定",
           MF_API_KEY_FILE: process.env.MF_API_KEY_FILE ?? "未設定（~/.mf-api-key を見る）",
@@ -176,9 +176,9 @@ export function createServer(): McpServer {
     ["mfc_ca_getTaxes", "/taxes", "税区分を取得します。"],
     ["mfc_ca_getTradePartners", "/trade_partners", "取引先を取得します。"],
   ] as const) {
-    server.tool(tool, desc, availableParam, async ({ available }) => {
+    server.tool(tool, desc, availableParam, async ({ available, office_code }) => {
       try {
-        return text(await api("GET", path, { query: { available } }));
+        return text(await api("GET", path, { query: { available }, officeCode: office_code }));
       } catch (e) {
         return errText(e);
       }
