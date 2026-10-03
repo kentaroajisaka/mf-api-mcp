@@ -4,8 +4,8 @@
   "description": "非公式MCPサーバー for マネーフォワード クラウド会計 — APIキー認証版。1本のキーで全事業者、証憑添付・仕訳削除に対応",
   "type": "module",
   "main": "dist/index.js",
-  "bin": { "mf-api-mcp": "dist/index.js" },
-  "files": ["dist", "README.md", "LICENSE"],
+  "bin": { "mf-api-mcp": "dist/index.js", "mf-bookkeeping": "dist/bookkeeping-cli.js" },
+  "files": ["dist", "docs", "README.md", "LICENSE"],
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc",

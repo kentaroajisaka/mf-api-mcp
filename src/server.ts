@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { api, encodePathId, defaultOfficeCode } from "./rest.js";
 import { listOffices, getJwt, readApiKey } from "./apikey.js";
+import { registerBoxTools } from "./box-tools.js";
+import { registerBookkeepingTools } from "./bookkeeping-tools.js";
 
 function text(payload: unknown) {
   return {
@@ -45,7 +47,7 @@ export function createServer(): McpServer {
 | 認証 | ブラウザで事業者を選んで許可 | **APIキー1本。ブラウザ不要** |
 | 事業者の切替 | use_office（プロセス単位の状態） | **呼び出しごとに office_code。状態を持たない** |
 | 認証情報の寿命 | refresh_token が使うたび変わる | **APIキーは変わらない** |
-| 複数環境での併用 | **不可**（取り合いで invalid_grant になる） | **可**（同じキーを配ってよい） |
+| 同じ人の複数環境での併用 | 同じ認証ファイルをコピーすると更新が競合する。認証を1台へ集約するか端末ごとに別アプリで認可する | **可**（他の人にはキーを渡さない） |
 | **仕訳メモ欄** | **アプリ名が勝手に入る** | **何も入らない** |
 
 ## 認証
@@ -60,6 +62,25 @@ export function createServer(): McpServer {
 - list_offices で一覧を取得（MF から直接引くので自前の台帳は無い）
 - MF_OFFICE_CODE を設定すると既定になる
 
+## クラウドBox
+- 保存方式は対象事業者についてユーザーが選んだ運用とMFスキルに従う。2件保存＋メモURL方式は、mfc_box_uploadFileで取得用原本を保存し、同じ原本をmfc_ca_postVouchersで新規保存・仕訳添付する
+- 2件保存方式では取得用の通常URL https://box.moneyforward.com/files/{file_id} を仕訳メモmemoへ追記する。摘要remarkは変更しない。既存メモを保持し、同じURLを重複追加しない。メモ上限200文字に収まらない場合は既存内容を勝手に削らない
+- 取得用file_idと添付用voucher_file_idは別ID。仕訳GETで添付用IDを確認し、GETしたメモURLから取得用IDを取り出してdownloadFileで原本とのSHA-256一致を確認する。2件保存とメモ更新を組み合わせた運用は実行ごとに一連の検証を行う
+- メモ更新のputJournalsは全置換。会計内容・税額・タグ・既存添付・transaction_idを保持し、更新後GETで確認する。通常URLを記録し、共有リンクや署名付きダウンロードURLは記録しない
+- mfc_ca_postVouchers由来の本体はBox APIで取得を拒否された実測がある。添付用IDのURLをメモに書くだけでは取得できるようにならない
+- 添付済み証憑の取得は、対象事業者を指定して仕訳GET → voucher_file_idsの各ID → mfc_box_fileUrls → web_download_urlをアクセス権のあるログイン済みブラウザで取得 → 原本がある場合はSHA-256照合。ID自体は推測せずAPIの実データを使う
+- ブラウザ用原本URLは https://box.moneyforward.com/frontend/v3/files/{file_id}/download。Box APIで403 INTERNAL_FILE_ACCESS_NOT_ALLOWEDだった会計API添付1件を、このブラウザ経路で取得して原本一致を実測した。同じIDをCookieなし・OAuth Bearerのみで取得すると401、認証なしも401。同じOAuthトークンの公開API情報取得は200で、有効なOAuthだけでは今回のブラウザログインを代替できなかった。全ファイル種別は未検証。画面用URL変更時は現行ダウンロードリンクを確認し、署名付き転送先URLやブラウザ認証情報を保存しない
+- 添付済み原本を再送しない。結果不明時は仕訳GETと保存記録を照合してから再実行を判断する
+- Box APIの通信には別途OAuth接続が必要。会計のAPIキーとは分離している。mfc_box_fileUrlsはURL生成だけで通信・OAuth認証・本体取得を行わない
+- 保存済み認証は自動更新する。同じ認証を複数のMacへコピーしない
+- 認証を持つMacにMCPを集約し、他端末からSSHで利用できる。同一Mac内の更新は直列化する
+- getFiles/getFile/uploadFile/downloadFile/authStatus/fileUrlsを提供。ローカルパスはMCPホスト上のパス
+- Box APIで保存したファイルは仕訳への添付後も取得できることを実測確認済み
+- MF内部システム由来の既存ファイルは本体取得が拒否される場合がある
+- uploadFileはBox保存のみ。保存済みファイル1件をそのまま仕訳へ紐づける代替経路はMF画面の「クラウドBoxから選択」。この経路ではfile_idとvoucher_file_idが一致する
+- 取得用と添付用の各ID、仕訳ID、メモURL、原本SHA-256、処理段階を記録し、未完了分を区別する。既存添付の一括変更や別事業者への方針適用はしない
+- 取引情報・電帳法区分の設定はこのBoxツールに含まれない
+
 ## 注意
 - ID は各 get 系ツールが返した URL エンコード済みの値をそのまま渡すこと
 - 仕訳登録・更新・削除・証憑添付/解除・明細仕訳化は帳簿を書き換える。実行前にユーザーの承認を得ること
@@ -67,9 +88,14 @@ export function createServer(): McpServer {
 - 仕訳登録の body は journal_type が必須。科目は account_id（account_item_id ではない）。
   明細は debitor / creditor / remark の形（side/value ではない）
 - getTransactions は start_date と end_date が必須
-- invoice_kind は書き込み3値(QUALIFIED/NOT_TARGET/UNQUALIFIED_80)が公式仕様`,
+- invoice_kind は INVOICE_KIND_QUALIFIED / INVOICE_KIND_NOT_TARGET / INVOICE_KIND_UNQUALIFIED_80 のように INVOICE_KIND_ 接頭辞付きで送る。短い値は400になった（APIキー経路で実測）
+- TAX_INCLUDEDの仕訳書込みではvalueに税込額を送る。GETではvalueは税抜、税込額はvalue+tax_value。書込み直後のレスポンスだけで金額を検証せずGETで確認する
+- getTransactionsのper_pageは最大500`,
     }
   );
+
+  registerBoxTools(server);
+  registerBookkeepingTools(server);
 
   // ---- 認証・事業者 ----
 
@@ -104,11 +130,11 @@ export function createServer(): McpServer {
     {},
     async () => {
       try {
-        const key = readApiKey();
+        readApiKey();
         await getJwt();
         const all = await listOffices();
         return text({
-          api_key: `${key.slice(0, 11)}…（${key.length}文字）`,
+          api_key: "設定あり（値は表示しません）",
           key_source: process.env.MF_API_KEY ? "環境変数 MF_API_KEY" : (process.env.MF_API_KEY_FILE ?? "~/.mf-api-key"),
           jwt: "取得できました（1時間有効・自動更新）",
           offices: all.length,
@@ -130,6 +156,7 @@ export function createServer(): McpServer {
         server: "mf-api-mcp",
         auth: "APIキー（アプリの概念が無いので仕訳メモ欄にアプリ名が入らない）",
         api_base: "https://api-accounting.moneyforward.com/api/v3",
+        cloudbox: { api_base: "https://api.box.moneyforward.com/v1/files", auth: "事業者ごとのOAuth（自動更新・ホスト固定・更新の排他制御）", config: process.env.MF_BOX_CONFIG ?? "~/.mf-api-mcp/cloudbox.json" },
         exchange: "https://api.biz.moneyforward.com/auth/exchange",
         jwt_ttl: "1時間（自動更新）",
         rate_limit: "交換エンドポイントのみ APIキーごと毎分100回。429 は Retry-After 付き",
@@ -210,7 +237,7 @@ export function createServer(): McpServer {
 
   server.tool(
     "mfc_ca_getJournals",
-    "仕訳一覧を取得します。start_date または end_date のいずれかが必要。",
+    "仕訳一覧を取得します。start_date または end_date のいずれかが必要。添付証憑IDはvoucher_file_ids。各IDをmfc_box_fileUrlsへ渡すとブラウザ用取得URLを生成できます。本体取得には権限のあるログイン済みブラウザを使います。",
     {
       ...officeParam,
       start_date: z.string().optional(),
@@ -232,7 +259,7 @@ export function createServer(): McpServer {
 
   server.tool(
     "mfc_ca_getJournalById",
-    "仕訳を1件取得します。",
+    "仕訳を1件取得します。添付証憑IDはjournal.voucher_file_ids。各IDをmfc_box_fileUrlsへ渡し、web_download_urlを権限のあるログイン済みブラウザで取得できます。Box OAuth APIの取得可否とは別です。",
     { ...officeParam, id: z.string().describe("仕訳ID（URLエンコード済みのまま）") },
     async ({ id, office_code }) => {
       try {
@@ -248,7 +275,7 @@ export function createServer(): McpServer {
     journal: z
       .record(z.any())
       .describe(
-        "仕訳オブジェクト { transaction_date, journal_type: 'journal_entry'|'adjusting_entry', branches: [{debitor?, creditor?, remark?}], tags?, memo? }。invoice_kind は自由値を許容（公式書込み3値以外は検証実験用）"
+        "仕訳オブジェクト { transaction_date, journal_type: 'journal_entry'|'adjusting_entry', branches: [{debitor?, creditor?, remark?}], tags?, memo? }。税込経理ではvalueに税込額を指定。invoice_kindはINVOICE_KIND_接頭辞付きの値を指定する"
       ),
   };
 
@@ -359,7 +386,7 @@ export function createServer(): McpServer {
       content_match_type: z.enum(["exact", "partial", "forward", "backward"]).optional(),
       order: z.enum(["asc", "desc"]).optional(),
       page: z.number().int().optional(),
-      per_page: z.number().int().optional().describe("10〜1000"),
+      per_page: z.number().int().max(500).optional().describe("最大500"),
     },
     async (args) => {
       try {
@@ -408,7 +435,7 @@ export function createServer(): McpServer {
       department_id: z.string().optional(),
       trade_partner_code: z.string().optional(),
       tax_id: z.string().optional(),
-      invoice_kind: z.string().optional().describe("公式書込み3値以外も送信可（検証実験用）"),
+      invoice_kind: z.string().optional().describe("INVOICE_KIND_QUALIFIED / INVOICE_KIND_NOT_TARGET等、INVOICE_KIND_接頭辞付きの値"),
       transaction_date: z.string().optional().describe("省略時は明細の取引日"),
       remark: z.string().optional(),
       memo: z.string().optional(),
@@ -428,7 +455,7 @@ export function createServer(): McpServer {
 
   server.tool(
     "mfc_ca_postVouchers",
-    "証憑をアップロードし仕訳に添付します（公式MCP未提供・要ユーザー承認）。file_paths を渡せばローカルファイルを自動でbase64化する。journal_id 省略時は孤立証憑になる（後から仕訳に紐づける手段はない）ので原則指定すること。",
+    "会計APIで証憑を新規保存し、journal_idを指定すると仕訳へ同時添付します。保存先はクラウドBoxでブラウザ操作は不要。ただし会計API由来の本体はBox APIから取得を拒否された実測があります。ユーザーが2件保存＋メモURL方式を選んだ場合は、同じ原本をBox APIで取得用として別途保存・取得確認し、その通常URLを仕訳メモmemoに残します。取得用IDとこのツールの添付用IDは別です。file_pathsは自動でbase64化。返却file_idを仕訳GETで照合し、原本とID対応を保持します。既存BoxファイルIDの再利用には対応しません。添付済み原本を再送しないでください。",
     {
       ...officeParam,
       journal_id: z.string().optional().describe("添付先の仕訳ID"),
