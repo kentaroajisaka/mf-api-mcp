@@ -40,12 +40,13 @@ export function readApiKey(): string {
 }
 
 /** JWT を取得する。1時間有効なので期限の1分前まで使い回す。 */
-export async function getJwt(force = false): Promise<string> {
+export async function getJwt(force = false, signal?: AbortSignal): Promise<string> {
   if (!force && cached && Date.now() < cached.expiresAt - 60_000) return cached.jwt;
 
   const res = await fetch(EXCHANGE_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${readApiKey()}`, Accept: "application/json" },
+    signal,
   });
   const text = await res.text();
 
