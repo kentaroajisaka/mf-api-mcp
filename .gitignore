@@ -3,3 +3,12 @@ dist/
 *.log
 .DS_Store
 .mf-api-key
+.mf-api-mcp/
+.mf-cloudbox/
+.env
+.env.*
+tokens.json
+cloudbox.json
+snapshot.json
+department_balances.json
+verification.json

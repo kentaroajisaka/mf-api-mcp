@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../dist/server.js";
 
-const explicitOffice = "6543-9039";
+const explicitOffice = "3333-4444";
 const defaultOffice = "1111-2222";
 const apiBase = "https://api-accounting.moneyforward.com/api/v3";
 const exchangeUrl = "https://api.biz.moneyforward.com/auth/exchange";
