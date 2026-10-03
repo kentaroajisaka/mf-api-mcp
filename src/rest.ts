@@ -31,7 +31,7 @@ export function defaultOfficeCode(): string | undefined {
 export async function api(
   method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
-  opts: { query?: Record<string, unknown>; body?: unknown; officeCode?: string } = {}
+  opts: { query?: Record<string, unknown>; body?: unknown; officeCode?: string; signal?: AbortSignal } = {}
 ): Promise<string> {
   // APIキー認証では office_code が必須。無いと 400 missing_required_query_parameter。
   // ツール側は引数にそのまま office_code を受けるので query からも拾う。
@@ -62,13 +62,14 @@ export async function api(
         ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal,
     });
 
-  let res = await doFetch(await getJwt());
+  let res = await doFetch(await getJwt(false, opts.signal));
 
   // JWT は1時間で切れる。401 は一度だけ取り直してリトライ。
   if (res.status === 401) {
-    res = await doFetch(await getJwt(true));
+    res = await doFetch(await getJwt(true, opts.signal));
   }
 
   const text = await res.text();
