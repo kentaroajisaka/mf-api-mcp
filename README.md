@@ -231,6 +231,7 @@ APIキー（期限なし） → POST https://api.biz.moneyforward.com/auth/excha
 | 帳票 | `getReportsTrialBalance{BS,PL}` `getReportsTransition{BS,PL}` |
 | 明細 | `getTransactions` `postTransactions` `postTransactionJournalize` |
 | **証憑** | **`postVouchers`** **`deleteVouchers`** |
+| 自動仕訳ルール | `getJournalRules` `postJournalRules` `putJournalRules` **`deleteJournalRules`** |
 
 太字は**公式MCPのツール一覧に無い**もの（公式MCP自体は試していない。
 REST API 側にエンドポイントが存在するかは別問題で、実際このサーバーは REST で叩いている）。
@@ -246,6 +247,14 @@ REST API 側にエンドポイントが存在するかは別問題で、実際�
 - `getTransactions` は **`start_date` と `end_date` が必須**
 - 試算表は `from`/`to` ではなく **`fiscal_year`**
 - メモに文字を入れると**末尾に `\n` が付く**。空なら空のまま
+
+### 自動仕訳ルール（2026-10-20 リリース・10-21 読み取りを実測）
+
+- 対象は「連携サービスから入力（通帳・カード他）」のルールだけ。APIキーでは**再接続なしで読めた**（必要な権限は「自動で仕訳 > 自動仕訳ルール（閲覧／編集）」）
+- 1ページ最大200件。`getJournalRules` に `all_pages: true` で全件まとめて取れる
+- **`putJournalRules` は全置換**。省略した項目は null で上書きされる。GET の結果をそのまま渡せば、`*_name` を外し、`value` は `FIXED_AMOUNT` のときだけ残す形に直して送る
+- 作成・更新・削除は**1件でも失敗すると全件不成立**（部分成功は無い）
+- 「どのルールにもマッチしなかった場合」のルール（`is_fallback_rule`）は口座×入出金に1件。content・一致条件・金額・優先度を送らない
 
 ID の `%2F` 問題（Base64 の ID をパスに埋めると 403 になる）は OAuth 版と同じ。
 `encodePathId` が処理する。
