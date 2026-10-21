@@ -6,6 +6,7 @@ import { api, encodePathId, defaultOfficeCode } from "./rest.js";
 import { listOffices, getJwt, readApiKey } from "./apikey.js";
 import { registerBoxTools } from "./box-tools.js";
 import { registerBookkeepingTools } from "./bookkeeping-tools.js";
+import { registerJournalRuleTools } from "./journal-rules.js";
 
 function text(payload: unknown) {
   return {
@@ -85,6 +86,7 @@ export function createServer(): McpServer {
 - ID は各 get 系ツールが返した URL エンコード済みの値をそのまま渡すこと
 - 仕訳登録・更新・削除・証憑添付/解除・明細仕訳化は帳簿を書き換える。実行前にユーザーの承認を得ること
 - putJournals は全置換 API。部分更新はできない
+- 自動仕訳ルール（mfc_ca_*JournalRules）は通帳・カード他のルールだけ。putJournalRules も全置換（省略は null 上書き）。GETで読んでから直して送る。作成・更新・削除は1件でも失敗すると全件不成立
 - 仕訳登録の body は journal_type が必須。科目は account_id（account_item_id ではない）。
   明細は debitor / creditor / remark の形（side/value ではない）
 - getTransactions は start_date と end_date が必須
@@ -312,6 +314,10 @@ export function createServer(): McpServer {
       }
     }
   );
+
+  // ---- 公式互換: 自動仕訳ルール（2026-10-20 リリース） ----
+
+  registerJournalRuleTools(server, api, officeParam);
 
   // ---- 公式互換: 帳票 ----
 

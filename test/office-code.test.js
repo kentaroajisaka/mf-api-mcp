@@ -36,6 +36,10 @@ const toolCases = [
   ["mfc_ca_postTransactionJournalize", "POST", "/transactions/journalize", { transaction_id: "test-id", account_id: "test-account" }],
   ["mfc_ca_postVouchers", "POST", "/vouchers", { voucher_files: [{ file_name: "test.txt", file_data: "dGVzdA==" }] }],
   ["mfc_ca_deleteVouchers", "DELETE", "/vouchers", { journal_id: "test-id", voucher_file_id: "test-file" }],
+  ["mfc_ca_getJournalRules", "GET", "/journal_rules", {}],
+  ["mfc_ca_postJournalRules", "POST", "/journal_rules", { journal_rules: [{ side: "EXPENSE", journal_template: { branches: [] } }] }],
+  ["mfc_ca_putJournalRules", "PUT", "/journal_rules", { journal_rules: [{ id: "r1", side: "EXPENSE", is_auto_registration: false, journal_template: { branches: [] } }] }],
+  ["mfc_ca_deleteJournalRules", "DELETE", "/journal_rules", { ids: ["r1"] }],
 ];
 
 let client;
