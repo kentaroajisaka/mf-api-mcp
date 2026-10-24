@@ -204,7 +204,8 @@ test("department aggregation uses each side's ID, keeps unassigned and does not 
   const r = departmentBalances(s);
   assert.equal(r.rows.find((r) => r.department_id === "dept-b").debit_amount, 290);
   assert.equal(r.rows.find((r) => r.department_id === "dept-a").credit_amount, 290);
-  assert.equal(r.rows.find((r) => r.department_id === "dept-b").closing_balance, null);
+  assert.equal(r.rows.find((r) => r.department_id === "dept-b").closing_balance, 290); // 開始仕訳が無ければ期首は0
+  assert.equal(r.opening_source, "no_opening_journal_zero");
   assert.equal(r.rows.reduce((n, r) => n + r.debit_amount, 0), 290);
   s.journals[0].branches[0].creditor.department_id = null;
   assert.equal(departmentBalances(s).rows.find((r) => r.department_id === null).credit_amount, 290);
@@ -217,6 +218,38 @@ test("known departmental opening balances produce credit/debit-normal closing ba
   assert.equal(departmentBalances(s,opening).rows.find((r) => r.department_id === "dept-a").closing_balance,390);
   assert.throws(() => departmentBalances(s,{...opening,office_code:"other-office"}),/different office/);
   assert.throws(() => departmentBalances(s,{...opening,rows:[...opening.rows,...opening.rows]}),/Duplicate/);
+});
+function withOpeningJournal(s) {
+  // MF の開始仕訳：期首日付・entered_by=JOURNAL_TYPE_OPENING。部門ごとに残高を入れる
+  s.journals.unshift(journal({ id: "opening-1", number: 1, transaction_date: term.start_date, entered_by: "JOURNAL_TYPE_OPENING", is_realized: true, memo: null,
+    branches: [{ debitor: { account_id: "expense", account_name: "例示費", value: 0, tax_value: 0, department_id: null },
+      creditor: { account_id: "settlement", account_name: "例示未払", sub_account_id: "sub-a", value: 1000, tax_value: 0, department_id: "dept-a" }, remark: null }] }));
+  s.journals[1].number = 2;
+  s.trial_balance.bs = { rows: [{ name: "負債の部合計", type: "liabilities", values: [1000, 0, 290, 1290], rows: [
+    { name: "例示未払", type: "account", values: [1000, 0, 290, 1290] }] }] };
+  return s;
+}
+test("MFの開始仕訳は期首残高として扱い、期中の借方・貸方には入れない", () => {
+  const r = departmentBalances(withOpeningJournal(departmentalFixture()));
+  const a = r.rows.find((x) => x.department_id === "dept-a" && x.account_id === "settlement");
+  assert.equal(a.opening_debit_minus_credit, -1000);
+  assert.equal(a.credit_amount, 290); // 開始仕訳の1000は入らない
+  assert.equal(a.closing_balance, 1290);
+  assert.equal(r.summary.included_journals, 1);
+  assert.equal(r.summary.opening_journals, 1);
+  assert.equal(r.summary.rows_with_unknown_opening, 0);
+  assert.deepEqual(r.opening_journal_numbers, [1]);
+  assert.equal(r.opening_source, "mf_opening_journals");
+  assert.equal(r.summary.opening_mismatches, 0);
+});
+test("期首残高を渡したときは開始仕訳を数えず、試算表と合わなければ知らせる", () => {
+  const s = withOpeningJournal(departmentalFixture());
+  const opening = { office_code: s.office_code, fiscal_year: term.fiscal_year, as_of_date: "2034-03-31", basis: "gross", source: "Synthetic", rows: [{
+    department_id: "dept-a", account_id: "settlement", sub_account_id: "sub-a", opening_debit_minus_credit: -900 }] };
+  const r = departmentBalances(s, opening);
+  assert.equal(r.summary.replaced_opening_journals, 1);
+  assert.equal(r.rows.find((x) => x.department_id === "dept-a").closing_balance, 1190);
+  assert.deepEqual(r.opening_check.mismatches, [{ account_name: "例示未払", trial_balance: 1000, journals: 900 }]);
 });
 test("department verification detects reassignment while whole-company balances stay unchanged", async () => {
   const before = departmentalFixture(), after = structuredClone(before), calls = [];
