@@ -18,7 +18,7 @@ export function registerBookkeepingTools(server: McpServer) {
   server.tool("mf_bookkeeping_verify", "処理後に対象仕訳だけ実GETし、明細状態・未仕訳件数・BS/PLの処理前後差分を一括確認。manifestで事業者と対象IDを明示。",
     { snapshot_file: path, manifest_file: path, output_dir: path },
     ({ snapshot_file, manifest_file, output_dir }) => result(() => runVerify(snapshot_file, manifest_file, output_dir)));
-  server.tool("mf_bookkeeping_departments", "取得済み年度仕訳を借方・貸方の部門ID別、科目・補助科目別に集計。部門未設定を含む。期首残高は推定せず、opening_fileを渡した組だけ期末残高も算出。API再取得なし。",
+  server.tool("mf_bookkeeping_departments", "取得済み年度仕訳を借方・貸方の部門ID別、科目・補助科目別に集計。部門未設定を含む。期首残高はMFの開始仕訳から取り（期中の動きと分ける）、期末残高まで算出。試算表の期首残高と照合。opening_fileを渡すと開始仕訳の代わりに使う。API再取得なし。",
     { snapshot_file: path, output_dir: path, opening_file: path.optional() },
     ({ snapshot_file, output_dir, opening_file }) => result(() => runDepartments(snapshot_file, output_dir, opening_file)));
 }
