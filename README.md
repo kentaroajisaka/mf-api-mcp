@@ -109,6 +109,18 @@ APIからの原本再取得と仕訳への添付を両立する方式として�
 原本と元証憑ID・SHA-256・仕訳ID・取得用ID・添付用ID・メモURL・検証結果の対応を保持し、添付の成功とAPI再取得可否を区別する。利用者が参照する対応付けはMF仕訳メモに置き、ローカル記録は再実行・復旧用の補助とする。
 添付済み原本を方式変更だけで再送しない。応答不明時も仕訳GETと保存記録を照合してから再実行を判断する。
 
+## 連携明細の対象外設定・解除
+
+APIキー版の `mf-api`（Codexのサーバー名 `mf_api`）を使います。状態更新には「自動で仕訳 > 連携サービスから入力」の編集権限が必要です。
+
+1. `list_offices` で事業者番号を確認し、`mfc_ca_getConnectedAccounts({ office_code })` で連携サービス・口座IDを照合します。連携サービスのAPI応答には `last_synced_time`、`retrieval_status`、`service_category_code` が追加されています。
+2. `mfc_ca_getTransactions({ office_code, ids })` で明細IDを最大50件ずつ読み、口座・日付・摘要・収支・金額・現在の `journalizing_status` を照合します。期間検索では `start_date` と `end_date` を両方指定します。ID検索では日付を省略します。仕訳との紐付きを確認する必要がある場合は、該当会計期間で `mfc_ca_getJournals` の `transaction_ids` を使います。
+3. 事業者・口座・対象明細・件数・変更前後の状態を提示し、その対象と変更内容についてユーザーの承認を得ます。紐付く仕訳がある明細は保留します。仕訳削除は別の操作であり、別途承認が必要です。
+4. `mfc_ca_putTransactionStatuses({ office_code, to: "excluded", transaction_ids })` を呼びます。対象外を解除して未仕訳に戻す場合は `to: "none"` です。IDはAPIの返却値をそのまま使用し、1〜1000件で重複を除きます。
+5. 成功応答の `transaction_ids` は指定したIDの一覧です。HTTPエラーやタイムアウトの場合も、同じ事業者で `mfc_ca_getTransactions` の `ids` を使い、全件の状態を読み戻します。欠落・不一致・確認不能があれば該当IDと現在の状態を報告し、再送の前に対象を確認します。
+
+[公式リリースノート（2026-11-24）](https://developers.api-accounting.moneyforward.com/release-notes#2026-11-24)
+
 ## クラウドBox API（OAuth）
 
 2件保存方式では取得用IDと添付用IDを区別する。Box APIで保存した1件を画面で直接添付する場合だけ、保存済みのBoxファイルIDと仕訳の添付IDを一致照合する。
