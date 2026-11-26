@@ -29,6 +29,7 @@ const toolCases = [
   ["mfc_ca_getReportsTransitionBalanceSheet", "GET", "/reports/transition_bs", { type: "monthly" }],
   ["mfc_ca_getReportsTransitionProfitLoss", "GET", "/reports/transition_pl", { type: "monthly" }],
   ["mfc_ca_getTransactions", "GET", "/transactions", { start_date: "2026-09-01", end_date: "2026-09-02" }],
+  ["mfc_ca_putTransactionStatuses", "PUT", "/transactions/statuses", { to: "excluded", transaction_ids: ["test-id"] }],
   ["mfc_ca_postTransactions", "POST", "/transactions", {
     connected_account_id: "test-account",
     transactions: [{ date: "2026-09-01", value: 1, side: "INCOME", content: "test" }],
@@ -48,6 +49,7 @@ let originalFetch;
 let originalApiKey;
 let originalOfficeCode;
 const apiRequests = [];
+let mockResponse;
 
 before(async () => {
   originalFetch = globalThis.fetch;
@@ -64,8 +66,8 @@ before(async () => {
       return Response.json({ access_token: "test-jwt", expires_in: 3600 });
     }
     if (url.startsWith(`${apiBase}/`)) {
-      apiRequests.push({ url: new URL(url), method: init?.method });
-      return Response.json({ ok: true });
+      apiRequests.push({ url: new URL(url), method: init?.method, headers: init?.headers, body: init?.body });
+      return mockResponse ?? Response.json({ ok: true });
     }
     throw new Error(`Unexpected fetch: ${url}`);
   };
@@ -131,5 +133,119 @@ test("引数の office_code は MF_OFFICE_CODE より優先される", async () 
     await checkTool("mfc_ca_getAccounts", "GET", "/accounts", { available: false }, explicitOffice);
   } finally {
     delete process.env.MF_OFFICE_CODE;
+  }
+});
+
+const transactionIds = ["sample%2Fid%3D", "other%2Bid%3D"];
+
+test("明細のID検索は繰り返しクエリを使い、エンコード済みIDを保持する", async () => {
+  await checkTool("mfc_ca_getTransactions", "GET", "/transactions", { ids: transactionIds }, explicitOffice);
+  assert.equal(apiRequests[0].url.search, "?office_code=3333-4444&ids=sample%2Fid%3D&ids=other%2Bid%3D");
+});
+
+test("明細検索は不完全な期間、期間とIDの併用、件数超過を送信しない", async () => {
+  for (const args of [{}, { start_date: "2026-11-01" }, { end_date: "2026-11-01" },
+    { ids: transactionIds, end_date: "2026-11-01" }, { ids: [] }, { ids: Array(51).fill("id") }]) {
+    apiRequests.length = 0;
+    const result = await client.callTool({ name: "mfc_ca_getTransactions", arguments: { office_code: explicitOffice, ...args } });
+    assert.equal(result.isError, true);
+    assert.equal(apiRequests.length, 0);
+  }
+});
+
+test("対象外設定・解除は状態をクエリに、元のIDをJSON本文に送り、API応答を返す", async () => {
+  for (const [to, ids] of [["excluded", transactionIds], ["none", Array.from({ length: 1000 }, (_, i) => `id-${i}`)]]) {
+    apiRequests.length = 0;
+    mockResponse = Response.json({ transaction_ids: ids });
+    try {
+      const result = await client.callTool({ name: "mfc_ca_putTransactionStatuses", arguments: {
+        office_code: explicitOffice, to, transaction_ids: ids,
+      } });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(JSON.parse(result.content[0].text), { transaction_ids: ids });
+      assert.equal(apiRequests.length, 1);
+      const [request] = apiRequests;
+      assert.equal(request.method, "PUT");
+      assert.equal(request.url.pathname, "/api/v3/transactions/statuses");
+      assert.equal(request.url.search, `?office_code=${explicitOffice}&to=${to}`);
+      assert.equal(request.headers["Content-Type"], "application/json");
+      assert.deepEqual(JSON.parse(request.body), { transaction_ids: ids });
+    } finally {
+      mockResponse = undefined;
+    }
+  }
+});
+
+test("不正な状態、重複、件数範囲外、事業者省略の更新は送信しない", async () => {
+  const valid = { office_code: explicitOffice, to: "excluded", transaction_ids: transactionIds };
+  for (const override of [{ to: "registered" }, { office_code: undefined }, { transaction_ids: [] },
+    { transaction_ids: ["id", "id"] },
+    { transaction_ids: Array.from({ length: 1001 }, (_, i) => `id-${i}`) }]) {
+    apiRequests.length = 0;
+    const result = await client.callTool({ name: "mfc_ca_putTransactionStatuses", arguments: { ...valid, ...override } });
+    assert.equal(result.isError, true);
+    assert.equal(apiRequests.length, 0);
+  }
+});
+
+test("APIの拒否やタイムアウト時も更新リクエスト以外を送らない", async () => {
+  for (const status of [400, 504]) {
+    apiRequests.length = 0;
+    mockResponse = Response.json({ errors: [{ message: "test error" }] }, { status });
+    try {
+      const result = await client.callTool({ name: "mfc_ca_putTransactionStatuses", arguments: {
+        office_code: explicitOffice, to: "excluded", transaction_ids: transactionIds,
+      } });
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, new RegExp(`HTTP ${status}`));
+      assert.deepEqual(apiRequests.map(({ method }) => method), ["PUT"]);
+    } finally {
+      mockResponse = undefined;
+    }
+  }
+});
+
+test("タイムアウト後のID検索で更新済み・未更新・欠落を照合できる", async () => {
+  const ids = [...transactionIds, "missing-id"];
+  apiRequests.length = 0;
+  mockResponse = Response.json({ errors: [{ message: "timeout" }] }, { status: 504 });
+  try {
+    const update = await client.callTool({ name: "mfc_ca_putTransactionStatuses", arguments: {
+      office_code: explicitOffice, to: "excluded", transaction_ids: ids,
+    } });
+    assert.equal(update.isError, true);
+
+    mockResponse = Response.json({ transactions: [
+      { id: ids[0], journalizing_status: "excluded" },
+      { id: ids[1], journalizing_status: "none" },
+    ] });
+    const readback = await client.callTool({ name: "mfc_ca_getTransactions", arguments: {
+      office_code: explicitOffice, ids,
+    } });
+    assert.equal(readback.isError, undefined);
+    const byId = new Map(JSON.parse(readback.content[0].text).transactions
+      .map(({ id, journalizing_status }) => [id, journalizing_status]));
+    assert.deepEqual(ids.map((id) => byId.get(id)), ["excluded", "none", undefined]);
+    assert.deepEqual(apiRequests.map(({ method }) => method), ["PUT", "GET"]);
+    assert.equal(apiRequests[1].url.searchParams.get("office_code"), explicitOffice);
+    assert.deepEqual(apiRequests[1].url.searchParams.getAll("ids"), ids.map(decodeURIComponent));
+  } finally {
+    mockResponse = undefined;
+  }
+});
+
+test("連携サービスは同期情報・null・既存フィールドをそのまま返す", async () => {
+  const body = { connected_accounts: [
+    { id: "bank", name: "銀行", last_synced_time: "2025/04/01 10:00", retrieval_status: "succeeded", service_category_code: "bank" },
+    { id: "manual", name: "手動", last_synced_time: null, retrieval_status: null, service_category_code: "other" },
+    { id: "legacy", name: "従来" },
+  ] };
+  mockResponse = Response.json(body);
+  try {
+    const result = await client.callTool({ name: "mfc_ca_getConnectedAccounts", arguments: { office_code: explicitOffice } });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(JSON.parse(result.content[0].text), body);
+  } finally {
+    mockResponse = undefined;
   }
 });
